@@ -2,27 +2,15 @@ server <- function(input, output, session) {
   
   
   #########Map of watewater sites
-  output$map_image <- renderPlot({
-    # Load preprocessed data
-    map_data <- readRDS("map_data.rds")
-    
-    # Create the plot
-    ggplot() +
-      geom_polygon(data = map_data$texas_map, aes(x = long, y = lat, group = group), 
-                   fill = "white", color = "black") +
-      geom_point(data = map_data$cities, aes(x = lon, y = lat), size = 5, shape = 21, 
-                 fill = map_data$cities$color, color = "black") +
-      geom_text(data = map_data$cities, aes(x = lon, y = lat, label = name,
-                                            hjust = map_data$text_positions$hjust,
-                                            vjust = map_data$text_positions$vjust), 
-                size = 8, fontface = "bold") +
-      coord_fixed(1.3) +
-      theme_void() +
-      theme(
-        plot.background = element_rect(fill = "white", color = NA),
-        panel.background = element_rect(fill = "white", color = NA)
-      ) 
-  })
+  output$map_image <- renderImage({
+    list(
+      src = "distribution.jpg",
+      contentType = "image/jpeg",
+      width = "100%",
+      height = "auto",
+      alt = "Distribution map"
+    )
+  }, deleteFile = FALSE)
   
   
   
@@ -253,7 +241,9 @@ server <- function(input, output, session) {
     }
   })
   
-  # Observe video toggle button
+  
+  
+  ########################## Observe video toggle button
   observeEvent(input$toggleVideoBtn, {
     session$sendCustomMessage(
       type = 'toggleVideo',
@@ -266,20 +256,15 @@ server <- function(input, output, session) {
   
   
   ############## Add the overview output
-  output$species_summary <- renderUI({
-    req(qual_eval)
-    
-    # Load preprocessed data
-    preprocessed_data <- readRDS("species_summary_data.rds")
-    
-    # Sort the data
+  # Helper function to generate species boxes
+  generate_species_boxes <- function(qual_eval, preprocessed_data) {
     sorted_qual_eval <- qual_eval %>%
       mutate(
         level = factor(level, levels = preprocessed_data$level_order, ordered = TRUE)
       ) %>%
       arrange(level, Species)
     
-    boxes <- lapply(1:nrow(sorted_qual_eval), function(i) {
+    lapply(1:nrow(sorted_qual_eval), function(i) {
       species_data <- sorted_qual_eval[i, ]
       status <- list(
         text = species_data$level,
@@ -297,13 +282,20 @@ server <- function(input, output, session) {
                 tolower(species_data$Trend))
       }
       
-      # Create the species title, making multiple species clickable
       species_title <- {
         if(species_data$Species %in% names(preprocessed_data$link_map)) {
-          tags$a(href = preprocessed_data$link_map[species_data$Species],
-                 target = "_blank",
-                 species_data$Species,
-                 style = "color: inherit; text-decoration: none;")
+          div(
+            style = "display: flex; align-items: center; gap: 10px;",
+            span(species_data$Species),  # Plain text for virus name
+            tags$a(
+              href = preprocessed_data$link_map[species_data$Species],
+              target = "_blank",
+              tags$span(
+                "CDC Info",
+                style = "color: #003366; font-size: 0.9em; text-decoration: underline;"
+              )
+            )
+          )
         } else {
           species_data$Species
         }
@@ -319,9 +311,22 @@ server <- function(input, output, session) {
           div(class = "species-description", description)
       )
     })
-    
-    # Return only the boxes, without any additional title
+  }
+  
+  # Desktop species summary
+  output$species_summary <- renderUI({
+    req(qual_eval)
+    preprocessed_data <- readRDS("species_summary_data.rds")
+    boxes <- generate_species_boxes(qual_eval, preprocessed_data)
     div(class = "species-boxes-container", boxes)
+  })
+  
+  # Mobile species summary
+  output$mobile_species_summary <- renderUI({
+    req(qual_eval)
+    preprocessed_data <- readRDS("species_summary_data.rds")
+    boxes <- generate_species_boxes(qual_eval, preprocessed_data)
+    div(class = "species-boxes-container mobile", boxes)
   })
   
   
@@ -333,11 +338,20 @@ server <- function(input, output, session) {
     # Load the pre-computed ggplot object
     p <- readRDS("sars_lineage_plot.rds")
     
-    # Convert to plotly and adjust layout
+    # Convert to plotly, adjust layout, and configure menu options
     ggplotly(p, tooltip = c("Week", "n_sites")) %>%
       layout(showlegend = FALSE,
              autosize = TRUE,
-             height = 600)
+             height = 600) %>%
+      config(displayModeBar = FALSE, # This hides the mode bar completely
+             scrollZoom = FALSE,
+             doubleClick = FALSE,
+             displaylogo = FALSE,
+             modeBarButtonsToRemove = list(
+               'zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 
+               'autoScale2d', 'resetScale2d', 'hoverClosestCartesian', 
+               'hoverCompareCartesian', 'toggleSpikelines'
+             ))
   })
   
   
@@ -358,13 +372,40 @@ server <- function(input, output, session) {
     # Ensure Date column is in Date format
     table_data$Date <- as.Date(table_data$Date)
     
+    # Common style for all sortable columns
+    sortable_style <- list(
+      cursor = "pointer",
+      "& [aria-label='Sort']" = list(
+        padding = "8px",
+        transform = "scale(1.5)",
+        display = "inline-flex",
+        alignItems = "center",
+        justifyContent = "center"
+      ),
+      "&:hover [aria-label='Sort']" = list(
+        opacity = 0.8
+      )
+    )
+    
+    # Style for header cells to increase clickable area
+    header_style <- list(
+      padding = "1.5rem 8px",  # Increased vertical padding
+      fontSize = "2.2rem",     # Slightly larger font
+      fontWeight = "600",      # Make text more prominent
+      cursor = "pointer",
+      "&:hover" = list(
+        backgroundColor = "rgba(0, 0, 0, 0.05)"
+      )
+    )
+    
     reactable(
       table_data,
       columns = list(
         Date = colDef(
+          style = sortable_style,
+          headerStyle = header_style,
           cell = function(value) {
             formatted <- format(value, "%m/%d/%Y")
-            # Log the original value and formatted string
             cat("Original:", as.character(value), "Formatted:", formatted, "\n")
             formatted
           },
@@ -375,7 +416,6 @@ server <- function(input, output, session) {
               var cellValue = row.values[columnId];
               console.log('Cell value:', cellValue);
               
-              // Create a regex pattern that matches either slash or hyphen
               var filterPattern = filterValue.replace(/[/-]/g, '[/-]');
               var regex = new RegExp(filterPattern);
               
@@ -386,11 +426,24 @@ server <- function(input, output, session) {
           }
         ")
         ),
-        City = colDef(),
-        sequence_name = colDef(name = "Sequence Name"),
-        accession = colDef(name = "Accession"),
+        City = colDef(
+          style = sortable_style,
+          headerStyle = header_style
+        ),
+        sequence_name = colDef(
+          name = "Sequence Name",
+          style = sortable_style,
+          headerStyle = header_style
+        ),
+        accession = colDef(
+          name = "Accession",
+          style = sortable_style,
+          headerStyle = header_style
+        ),
         Percent_covered = colDef(
           name = "% Covered",
+          style = sortable_style,
+          headerStyle = header_style,
           cell = function(value) paste0(formatC(value * 100, format = "f", digits = 2), "%"),
           filterMethod = JS("
           function(rows, columnId, filterValue) {
@@ -398,7 +451,7 @@ server <- function(input, output, session) {
               var percentValue = (row.values[columnId] * 100).toFixed(2);
               var filterNum = parseFloat(filterValue);
               if (isNaN(filterNum)) {
-                return true; // If the filter is not a number, show all rows
+                return true;
               }
               var percentNum = parseFloat(percentValue);
               return percentNum >= filterNum && percentNum < (filterNum + 1);
@@ -408,6 +461,8 @@ server <- function(input, output, session) {
         ),
         RPKMF = colDef(
           name = "RPKMF",
+          style = sortable_style,
+          headerStyle = header_style,
           format = colFormat(digits = 2),
           filterMethod = JS("
           function(rows, columnId, filterValue) {
@@ -415,12 +470,10 @@ server <- function(input, output, session) {
               if (filterValue === '') return true;
               var cellValue = row.values[columnId].toFixed(2);
               
-              // If filter starts with a decimal point, prepend a '0'
               if (filterValue.startsWith('.')) {
                 filterValue = '0' + filterValue;
               }
               
-              // Ensure the filter value has two decimal places
               var parts = filterValue.split('.');
               if (parts.length === 1) {
                 filterValue += '.00';
@@ -428,7 +481,6 @@ server <- function(input, output, session) {
                 filterValue += '0';
               }
               
-              // Exact match
               return cellValue === filterValue;
             });
           }
@@ -436,6 +488,8 @@ server <- function(input, output, session) {
         ),
         coverage = colDef(
           name = "Coverage",
+          style = sortable_style,
+          headerStyle = header_style,
           cell = function(value) {
             sparkline(value, type = "line", chartRangeMin = 0, width = 200, height = 40)
           },
@@ -456,7 +510,7 @@ server <- function(input, output, session) {
   
   
   
-  #Render methods image
+  #Render methods image for desktop
   output$methodsImage <- renderImage({
     list(
       src = "www/methods.png",
@@ -465,6 +519,10 @@ server <- function(input, output, session) {
       alt = "Methods Diagram"
     )
   }, deleteFile = FALSE)
+  
+  
+  
+
   
   
 }

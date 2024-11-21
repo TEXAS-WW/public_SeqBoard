@@ -54,6 +54,7 @@ suppressPackageStartupMessages({
   library(cdlTools)  # For converting state FIPS codes to state names
   library(htmlwidgets)
   library(ggmap)
+  library(shinyMobile) #For mobile optimization
   options(tigris_use_cache = TRUE)  # Use local caching for 'tigris' data
 })
 
@@ -543,16 +544,16 @@ qual_eval <- sense_path_expand_dt %>%
   mutate(
     percent_diff = (most_recent - avg_last_4) / avg_last_4 * 100,
     Trend = case_when(
-      percent_diff >= 15 ~ "Increasing",
-      percent_diff <= -15 ~ "Decreasing",
+      percent_diff >= 100 ~ "Increasing",
+      percent_diff <= 0 ~ "Decreasing",
       TRUE ~ "None"
     ),
     
     # Add historic_context column based on the new historic_median
     historic_context = case_when(
       avg_last_4 <= (1/2 * historic_median) ~ "Low",
-      avg_last_4 > (1/2 * historic_median) & most_recent <= (1.5 * historic_median) ~ "Medium",
-      avg_last_4 > (1.5 * historic_median) ~ "High"
+      avg_last_4 > (1/2 * historic_median) & most_recent <= (3.25 * historic_median) ~ "Medium",
+      avg_last_4 > (3.25 * historic_median) ~ "High"
     )
   ) %>%
   
@@ -765,7 +766,25 @@ text_positions <- data.frame(
 )
 
 # Get the map data for Texas
-texas_map <- map_data("state", region = "texas")
+# <- map_data("state", region = "texas")
+texas_map <- st_read("PHR.shp")
+
+
+# Convert the sf object to a data frame that ggplot can use
+texas_map_df <- texas_map %>%
+  st_cast("MULTIPOLYGON") %>%  # Ensure all geometries are MULTIPOLYGON
+  st_cast("POLYGON") %>%       # Cast to POLYGON
+  mutate(id = row_number()) %>% # Add an id for each polygon
+  st_cast("POINT") %>%         # Convert to points
+  mutate(
+    long = st_coordinates(.)[,1],
+    lat = st_coordinates(.)[,2]
+  ) %>%
+  st_drop_geometry() %>%       # Remove the geometry column
+  group_by(id) %>%
+  mutate(group = cur_group_id()) %>%
+  ungroup()
+
 
 # Save all preprocessed data
 saveRDS(list(
